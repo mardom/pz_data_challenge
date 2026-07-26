@@ -1,0 +1,17 @@
+git+https://github.com/mardom/Pontifex.git
+polymathic-aion
+torch>=2.4.0
+safetensors>=0.4.3
+scikit-learn
+joblib
+minisom
+pzflow
+pz-rail-pzflow
+pz-rail-gpz-v1
+lephare
+pz-rail-lephare
+pz-rail-sklearn
+pz-rail-som
+pz-rail-flexzboost
+pz-rail-bpz
+desc-bpz
