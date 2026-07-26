@@ -1,4 +1,4 @@
-git+https://github.com/mardom/Pontifex.git
+https://github.com/mardom/pz_data_challenge/releases/download/v2.0.0/pontifex-0.1.0-py3-none-any.whl
 polymathic-aion
 torch>=2.4.0
 safetensors>=0.4.3
