@@ -12,6 +12,7 @@ def train_and_estimate(
     output_file: Union[str, Path],
     save_model_to: Union[str, Path, None] = None,
     seed: int = 42,
+    optimize_hyperparams: bool = False,
 ) -> None:
     """
     Train the committee of experts, perform footprint-corrected EM calibration
@@ -22,7 +23,8 @@ def train_and_estimate(
         test_file=test_file,
         output_file=output_file,
         save_model_to=save_model_to,
-        seed=seed
+        seed=seed,
+        optimize_hyperparams=optimize_hyperparams
     )
 
 def estimate_only(
