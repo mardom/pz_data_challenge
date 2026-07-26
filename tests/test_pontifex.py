@@ -28,6 +28,7 @@ from pz_data_challenge import submit_utils  # noqa: F401
 
 SUBMISSION_NAME = "pontifex"
 SUBMISSION_URL = "https://github.com/mardom/pz_data_challenge/releases/download/v2.0.0/pontifex.tgz"
+AION_WEIGHTS_URL = "https://github.com/mardom/pz_data_challenge/releases/download/v2.0.0/aion_base_weights.tgz"
 
 # don't change these
 SUBMIT_DIR: str = f"submissions/{SUBMISSION_NAME}"
@@ -45,6 +46,9 @@ def setup_submit_area(request: pytest.FixtureRequest) -> int:
             os.makedirs(SUBMIT_DIR, exist_ok=True)
         else:
             submit_utils.download_and_extract_tar(SUBMISSION_URL, SUBMIT_DIR)
+
+    if AION_WEIGHTS_URL and not os.path.exists(os.path.join(SUBMIT_DIR, "hf_cache")):
+        submit_utils.download_and_extract_tar(AION_WEIGHTS_URL, SUBMIT_DIR)
 
     def teardown_submit_area() -> None:
         pass
