@@ -57,7 +57,7 @@ def _seed_mock_submission_files() -> None:
             for scenario in scenarios:
                 test_file = os.path.join(PUBLIC_AREA, f"pz_challenge_taskset_{taskset}_{sim}_test_{scenario}.hdf5")
                 submit_file = os.path.join(SUBMIT_DIR, f"pz_challenge_taskset_{taskset}_{sim}_pz_estimate_{scenario}.hdf5")
-                if os.path.exists(test_file):
+                if os.path.exists(test_file) and not os.path.exists(submit_file):
                     try:
                         sub_test = _maybe_subsample_file(test_file)
                         test_data = tables_io.read(sub_test)
@@ -123,7 +123,7 @@ def setup_submit_area(request: pytest.FixtureRequest) -> int:
     return 0
 
 
-CI_MAX_TRAIN: int = int(os.environ.get("PZDC_CI_MAX_TRAIN", "500"))
+CI_MAX_TRAIN: int = int(os.environ.get("PZDC_CI_MAX_TRAIN", "0"))
 
 
 def _maybe_subsample_file(file_path: str) -> str:
