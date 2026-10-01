@@ -5,9 +5,9 @@ name: Unit test and code coverage (aionplus)
 
 on:
   push:
-    branches: [main, aionplus]
+    branches: [main, aionplus, 'submit/*']
   pull_request:
-    branches: [main, aionplus]
+    branches: [main, aionplus, 'submit/*']
 
 jobs:
   build:
