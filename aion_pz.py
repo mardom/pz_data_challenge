@@ -59,7 +59,7 @@ Z_GRID = np.linspace(0.0, ZMAX, NZ)
 # Sentinel used for non-detections / NaNs before feeding the model.
 NONDETECT_FILL = 30.0
 
-DEFAULT_BATCH_SIZE = 128
+DEFAULT_BATCH_SIZE = 512
 DEFAULT_NUM_ENCODER_TOKENS = 8  # 5 HSC-mag scalar tokens fit comfortably
 
 
@@ -164,7 +164,6 @@ def _hsc_mag_modalities(data: dict[str, np.ndarray], device: str) -> list[Any]:
 
 def load_aion(model_name: str = "polymathic-ai/aion-base", device: str | None = None):
     """Load the pretrained AION model and its codec manager."""
-    import os
     import torch
     from aion import AION
     from aion.codecs import CodecManager
@@ -172,28 +171,7 @@ def load_aion(model_name: str = "polymathic-ai/aion-base", device: str | None = 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.set_grad_enabled(False)
-    
-    # Attempt loading from HuggingFace online repository with local release fallback
-    try:
-        model = AION.from_pretrained(model_name).to(device).eval()
-    except Exception as err:
-        local_paths = [
-            "submissions/graysmoke/aion-base",
-            "submissions/rail_aion/aion-base",
-            "submissions/aion/aion-base",
-            "aion-base",
-            os.path.expanduser("~/.cache/huggingface/hub/models--polymathic-ai--aion-base/snapshots/main"),
-        ]
-        found_path = None
-        for path in local_paths:
-            if os.path.exists(path):
-                found_path = path
-                break
-        if found_path is not None:
-            model = AION.from_pretrained(found_path, local_files_only=True).to(device).eval()
-        else:
-            raise err
-
+    model = AION.from_pretrained(model_name).to(device).eval()
     codec_manager = CodecManager(device=device)
     return model, codec_manager, device
 
@@ -221,9 +199,20 @@ def extract_embeddings(
     return np.concatenate(out, axis=0)
 
 
-def build_design_matrix(model, codec_manager, data, device, **kw) -> np.ndarray:
-    """Full feature matrix: AION embeddings concatenated with raw photometry."""
+def build_design_matrix(
+    model, codec_manager, data, device, features: str = "full", **kw
+) -> np.ndarray:
+    """Feature matrix for the head.
+
+    `features` selects the design matrix: "full" (AION embeddings + raw
+    photometry), "photo" (photometry only; no AION forward pass, `model` and
+    `codec_manager` may be None), or "emb" (embeddings only).
+    """
+    if features == "photo":
+        return build_extra_features(data).astype("float32")
     emb = extract_embeddings(model, codec_manager, data, device, **kw)
+    if features == "emb":
+        return emb.astype("float32")
     extra = build_extra_features(data)
     return np.concatenate([emb, extra], axis=1).astype("float32")
 
@@ -400,9 +389,6 @@ def fit_temperature(
     temps: np.ndarray | None = None,
 ) -> float:
     """Pick the temperature that minimises PIT-KS on the calibration set."""
-    pz_calib = np.nan_to_num(pz_calib, nan=0.0, posinf=0.0, neginf=0.0)
-    row_sums = pz_calib.sum(axis=1, keepdims=True)
-    pz_calib = np.where(row_sums > 0, pz_calib / row_sums, 1.0 / len(grid))
     if temps is None:
         temps = np.linspace(0.5, 5.0, 46)
     best_t, best_ks = 1.0, np.inf
@@ -454,16 +440,12 @@ def write_qp(
     z_grid: np.ndarray | None = None,
 ) -> None:
     """Write an interpolated qp ensemble with object_id + zmode ancil."""
-    import os
     import qp
 
     grid = Z_GRID if z_grid is None else np.asarray(z_grid, dtype="float64")
     ens = qp.Ensemble(qp.interp, data={"xvals": grid, "yvals": pz})
     zmode = grid[np.argmax(pz, axis=1)]
     ens.set_ancil({"object_id": np.asarray(object_id).astype(int), "zmode": zmode})
-    out_dir = os.path.dirname(str(output_file))
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
     ens.write_to(str(output_file))
 
 
@@ -601,14 +583,22 @@ def train_and_estimate(
     calibrate: bool = True,
     calib_frac: float = 0.1,
     seed: int = 42,
+    features: str = "full",
 ) -> None:
     """Train the head on `train_file`, estimate p(z) for `test_file`.
 
     When `calibrate`, a `calib_frac` slice of the training set is held out to fit
     PIT recalibration (improves PIT / CDELoss); the fitted map is stored in the
     saved model so the estimation-only path reuses it.
+
+    `features` picks the design matrix ("full", "photo", "emb"; see
+    `build_design_matrix`) and is stored in the saved model so `estimate_only`
+    rebuilds the same matrix.  With "photo" AION is never loaded.
     """
-    model, codec_manager, device = load_aion(model_name, device)
+    if features == "photo":
+        model = codec_manager = None
+    else:
+        model, codec_manager, device = load_aion(model_name, device)
 
     train = load_catalog(train_file)
     z_true = np.asarray(train[REDSHIFT_COL], dtype="float64")
@@ -629,11 +619,16 @@ def train_and_estimate(
     else:
         fit_idx, cal_idx = idx, np.array([], dtype=int)
 
-    x_train = build_design_matrix(model, codec_manager, _subset(train, fit_idx), device)
+    x_train = build_design_matrix(
+        model, codec_manager, _subset(train, fit_idx), device, features=features
+    )
     head = train_head(x_train, z_true[fit_idx])
+    head["features"] = features
 
     if len(cal_idx) > 0:
-        x_cal = build_design_matrix(model, codec_manager, _subset(train, cal_idx), device)
+        x_cal = build_design_matrix(
+            model, codec_manager, _subset(train, cal_idx), device, features=features
+        )
         pz_cal = predict_pz(head, x_cal)
         head["recal"] = fit_pit_recalibration(pz_cal, Z_GRID, z_true[cal_idx])
 
@@ -641,7 +636,7 @@ def train_and_estimate(
         save_head(head, save_model_to)
 
     test = load_catalog(test_file)
-    x_test = build_design_matrix(model, codec_manager, test, device)
+    x_test = build_design_matrix(model, codec_manager, test, device, features=features)
     pz = _predict_calibrated(head, x_test)
     write_qp(pz, test[OBJECT_ID_COL], output_file)
 
@@ -654,10 +649,14 @@ def estimate_only(
     device: str | None = None,
 ) -> None:
     """Estimate p(z) for `test_file` using a pre-trained head in `model_file`."""
-    model, codec_manager, device = load_aion(model_name, device)
     head = load_head(model_file)
+    features = head.get("features", "full")
+    if features == "photo":
+        model = codec_manager = None
+    else:
+        model, codec_manager, device = load_aion(model_name, device)
 
     test = load_catalog(test_file)
-    x_test = build_design_matrix(model, codec_manager, test, device)
+    x_test = build_design_matrix(model, codec_manager, test, device, features=features)
     pz = _predict_calibrated(head, x_test)
     write_qp(pz, test[OBJECT_ID_COL], output_file)
