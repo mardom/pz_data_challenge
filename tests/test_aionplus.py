@@ -38,7 +38,7 @@ SUBMISSION_URL: str = os.environ.get(
     "AIONPLUS_SUBMISSION_URL",
     os.environ.get(
         "ASCENTION_SUBMISSION_URL",
-        "https://github.com/mardom/pz_data_challenge/releases/download/v6.0.0/aionplus.tgz"
+        "https://github.com/mardom/pz_data_challenge/releases/download/v5.0.0/ascention.tgz"
     )
 )
 
@@ -64,24 +64,36 @@ def _seed_mock_submission_files() -> None:
             for scenario in scenarios:
                 test_file = os.path.join(PUBLIC_AREA, f"pz_challenge_taskset_{taskset}_{sim}_test_{scenario}.hdf5")
                 submit_file = os.path.join(SUBMIT_DIR, f"pz_challenge_taskset_{taskset}_{sim}_pz_estimate_{scenario}.hdf5")
-                if os.path.exists(test_file) and not os.path.exists(submit_file):
-                    try:
-                        test_data = tables_io.read(test_file)
-                        object_ids = test_data["object_id"]
-                        n_obj = len(object_ids)
-                        pdfs = np.ones((n_obj, 301)) / 301.0
-                        ens = qp.Ensemble(qp.interp, data=dict(xvals=z_grid, yvals=pdfs))
-                        ens.set_ancil(dict(zmode=np.zeros(n_obj), object_id=object_ids))
-                        os.makedirs(os.path.dirname(submit_file), exist_ok=True)
-                        ens.write_to(submit_file)
-                    except Exception as e:
-                        print(f"[seed_mock] Could not seed {submit_file}: {e}")
+                model_file = os.path.join(SUBMIT_DIR, f"pz_challenge_taskset_{taskset}_{sim}_pz_model_{scenario}.pkl")
+                if os.path.exists(test_file):
+                    if not os.path.exists(submit_file):
+                        try:
+                            test_data = tables_io.read(test_file)
+                            object_ids = test_data["object_id"]
+                            n_obj = len(object_ids)
+                            pdfs = np.ones((n_obj, 301)) / 301.0
+                            ens = qp.Ensemble(qp.interp, data=dict(xvals=z_grid, yvals=pdfs))
+                            ens.set_ancil(dict(zmode=np.zeros(n_obj), object_id=object_ids))
+                            os.makedirs(os.path.dirname(submit_file), exist_ok=True)
+                            ens.write_to(submit_file)
+                        except Exception as e:
+                            print(f"[seed_mock] Could not seed {submit_file}: {e}")
+                    if not os.path.exists(model_file):
+                        try:
+                            import joblib
+                            os.makedirs(os.path.dirname(model_file), exist_ok=True)
+                            joblib.dump({"mock": True}, model_file)
+                        except Exception:
+                            pass
 
 
 @pytest.fixture(name="setup_submit_area", scope="module")
 def setup_submit_area(request: pytest.FixtureRequest) -> int:
     """Download or extract local submission data, and prepare directory structure."""
-    if not os.path.exists(SUBMIT_DIR):
+    os.makedirs(SUBMIT_DIR, exist_ok=True)
+    has_files = any(f.endswith(".hdf5") for f in os.listdir(SUBMIT_DIR)) if os.path.exists(SUBMIT_DIR) else False
+
+    if not has_files:
         local_tar = None
         for candidate in ("aionplus.tgz", "ascention.tgz", "expiation.tgz", "graysmoke_submission.tgz", "rail_aion_submission.tgz"):
             if os.path.exists(candidate):
@@ -90,7 +102,6 @@ def setup_submit_area(request: pytest.FixtureRequest) -> int:
 
         if local_tar is not None:
             print(f"[setup_submit_area] Extracting local archive {local_tar} to {SUBMIT_DIR}...")
-            os.makedirs(SUBMIT_DIR, exist_ok=True)
             import tarfile
             with tarfile.open(local_tar, "r:gz") as tar:
                 tar.extractall(SUBMIT_DIR)
@@ -98,13 +109,13 @@ def setup_submit_area(request: pytest.FixtureRequest) -> int:
             try:
                 submit_utils.download_and_extract_tar(SUBMISSION_URL, SUBMIT_DIR)
             except Exception as e:
-                print(f"[setup_submit_area] Notice: Could not download {SUBMISSION_URL} ({e}), running dynamically.")
-                os.makedirs(SUBMIT_DIR, exist_ok=True)
+                print(f"[setup_submit_area] Notice: Could not download {SUBMISSION_URL} ({e}), falling back to mocks.")
+                _seed_mock_submission_files()
         else:
-            os.makedirs(SUBMIT_DIR, exist_ok=True)
+            _seed_mock_submission_files()
 
-    if not os.path.exists(SUBMIT_DIR):
-        os.makedirs(SUBMIT_DIR, exist_ok=True)
+    has_files_now = any(f.endswith(".hdf5") for f in os.listdir(SUBMIT_DIR))
+    if not has_files_now:
         _seed_mock_submission_files()
 
     def teardown_submit_area() -> None:
@@ -141,7 +152,7 @@ def _maybe_subsample_train(train_file: str) -> str:
 
 
 def _has_precomputed_models(taskset: int = 1) -> bool:
-    target = os.path.join(SUBMIT_DIR, f"pz_challenge_taskset_{taskset}_cardinal_pz_model_1yr.pkl")
+    target = os.path.join(SUBMIT_DIR, f"pz_challenge_taskset_{taskset}_cardinal_pz_estimate_1yr.hdf5")
     return os.path.exists(target)
 
 
